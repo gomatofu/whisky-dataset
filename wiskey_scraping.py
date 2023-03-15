@@ -29,13 +29,14 @@ try:
             #     img_file.write(img_response.content)
             # img_path = 'images/' + item.find('p', {'class': 'p-item__ttl'}).text.strip() + '.jpg'
 
-            # 商品情報を取得する(奇数時：メーカー、偶数時：以外)
-            if index % 2 != 0:
+            # 商品情報を取得する(tr-borderが3つで1セットであるため)
+            if index % 3 == 1:
                 maker = item.find('span').getText().strip()
-            else:
+            elif index % 3 == 2:
                 name = item.select('img')[0].get('alt')
                 kind = item.find('span', {'class': 'sortBox'}).find('a').getText().strip()
-                degree = item.find('td', {'class': 'end'}).find('span', {'class': 'typeClk'}).getText().strip()
+                degreeHTML = item.find('td', {'class': 'end'}).find('span', {'class': 'typeClk'})
+                degree = degreeHTML.getText().strip() if degreeHTML is not None else ''
 
                 # 取得したデータをcsvファイルに書き込む
                 writer.writerow([name, maker, kind, degree])
