@@ -6,9 +6,9 @@ import csv
 
 try:
     # csvファイルを開く
-    with open('whiskey.csv', mode='w', newline='', encoding='utf-8') as f:
+    with open('whisky_data.csv', mode='w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
-        writer.writerow(['image_path', 'product_name', 'manufacturer', 'product_type', 'alcohol'])
+        writer.writerow(['image_path', 'product_name', 'manufacturer', 'category', 'alcohol_content'])
 
         
         # Webページを取得する
