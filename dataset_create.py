@@ -1,91 +1,79 @@
 import pandas as pd
 import numpy as np
 from PIL import Image
-import tensorflow as tf
+from sklearn.model_selection import train_test_split
 import os
-from keras import layers, models
+import tensorflow as tf
+from keras import layers
 
-csv_file = "whisky_data.csv"
-df = pd.read_csv(csv_file)
+# CSVファイルの読み込み
+csv_path = 'whisky_data.csv'
+df = pd.read_csv(csv_path)
 
+# 画像データの読み込みと前処理
+def load_image(image_path):
+    img = Image.open(image_path).convert('RGB')
+    img = img.resize((224, 224))
+    img_array = np.array(img) / 255.0
+    return img_array
+
+# 商品名称を数値にエンコード
+labels = pd.Categorical(df['product_name']).codes
+
+# 画像データの読み込みと前処理
 images = []
-product_names = []
-manufacturers = []
-categories = []
-alcohol_contents = []
+valid_labels = []
 
 for index, row in df.iterrows():
-    # 画像ファイルが存在しない場合
-    if not os.path.isfile(str(row['image_path'])):
-        continue
-    image = Image.open(row['image_path']).convert('RGB')
-    image = image.resize((224, 224), Image.ANTIALIAS)
-    images.append(np.array(image))
-    product_names.append(row['product_name'])
-    manufacturers.append(row['manufacturer'])
-    categories.append(row['category'])
-    alcohol_contents.append(row['alcohol_content'])
+    image_path = row['image_path']
+    
+    if os.path.exists(str(image_path)):
+        try:
+            img = load_image(image_path)
+            images.append(img)
+            valid_labels.append(labels[index])
+        except:
+            print(f"Failed to load image: {image_path}")
+    else:
+        print(f"Image not found: {image_path}")
 
-image_tensors = tf.convert_to_tensor(images, dtype=tf.float32)
+# データセットの分割
+X_train, X_test, y_train, y_test = train_test_split(images, valid_labels, test_size=0.2, random_state=42)
 
-def categorical_to_tensor(categorical_data, na_value="unknown"):
-    filled_data = [value if pd.notna(value) else na_value for value in categorical_data]
-    unique_values = np.unique(filled_data)
-    value_to_index = {value: index for index, value in enumerate(unique_values)}
-    indices = [value_to_index[value] for value in filled_data]
-    return tf.convert_to_tensor(indices, dtype=tf.int32), unique_values
+# Convert X_train, X_test, y_train, and y_test to NumPy arrays
+X_train = np.array(X_train)
+X_test = np.array(X_test)
+y_train = np.array(y_train).astype(np.int32)
+y_test = np.array(y_test).astype(np.int32)
 
+# モデルの作成
+model = tf.keras.Sequential([
+    layers.Input(shape=(224, 224, 3)),
+    layers.Conv2D(32, kernel_size=(3, 3), activation='relu'),
+    layers.MaxPooling2D(pool_size=(2, 2)),
+    layers.Conv2D(64, kernel_size=(3, 3), activation='relu'),
+    layers.MaxPooling2D(pool_size=(2, 2)),
+    layers.Flatten(),
+    layers.Dense(128, activation='relu'),
+    layers.Dense(len(np.unique(labels)), activation='softmax')
+])
 
-product_name_tensor, unique_product_names = categorical_to_tensor(product_names)
-manufacturer_tensor, unique_manufacturers = categorical_to_tensor(manufacturers)
-category_tensor, unique_categories = categorical_to_tensor(categories)
-alcohol_content_tensor = tf.convert_to_tensor(alcohol_contents, dtype=tf.float32)
+model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
-dataset = tf.data.Dataset.from_tensor_slices((image_tensors, {
-    'product_name': product_name_tensor,
-    'manufacturer': manufacturer_tensor,
-    'category': category_tensor,
-    'alcohol_content': alcohol_content_tensor
-}))
-dataset = dataset.shuffle(buffer_size=len(images)).batch(32).repeat()
+# モデルの訓練
+history = model.fit(X_train, y_train, epochs=10, validation_split=0.1)
 
-def create_multitask_model():
-    base_model = models.Sequential([
-        layers.Conv2D(32, (3, 3), activation='relu', input_shape=(224, 224, 3)),
-        layers.MaxPooling2D((2, 2)),
-        layers.Conv2D(64, (3, 3), activation='relu'),
-        layers.MaxPooling2D((2, 2)),
-        layers.Conv2D(64, (3, 3), activation='relu'),
-        layers.Flatten(),
-        layers.Dense(64, activation='relu')
-    ])
+# モデルの評価
+test_loss, test_acc = model.evaluate(X_test, y_test)
+print('Test accuracy:', test_acc)
 
-    product_name_output = layers.Dense(len(unique_product_names), activation='softmax', name='product_name')(base_model.output)
-    manufacturer_output = layers.Dense(len(unique_manufacturers), activation='softmax', name='manufacturer')(base_model.output)
-    category_output = layers.Dense(len(unique_categories), activation='softmax', name='category')(base_model.output)
-    alcohol_content_output = layers.Dense(1, activation='linear', name='alcohol_content')(base_model.output)
+# モデルの保存
+model.save('whisky_model.h5')
 
-    model = models.Model(inputs=base_model.input, outputs=[product_name_output, manufacturer_output, category_output, alcohol_content_output])
-    return model
+# 商品名のリストを作成
+product_names = pd.Categorical(df['product_name']).categories
 
-multitask_model = create_multitask_model()
-
-multitask_model.compile(optimizer='adam',
-                        loss={
-                            'product_name': tf.keras.losses.SparseCategoricalCrossentropy(),
-                            'manufacturer': tf.keras.losses.SparseCategoricalCrossentropy(),
-                            'category': tf.keras.losses.SparseCategoricalCrossentropy(),
-                            'alcohol_content': tf.keras.losses.MeanSquaredError()
-                        },
-                        metrics={
-                            'product_name': 'accuracy',
-                            'manufacturer': 'accuracy',
-                            'category': 'accuracy',
-                            'alcohol_content': 'mse'
-                        })
-
-num_epochs = 10
-steps_per_epoch = len(images) // 32
-multitask_model.fit(dataset, epochs=num_epochs, steps_per_epoch=steps_per_epoch)
-
-multitask_model.save('whisky_multitask_model.h5')
+# 商品名のリストをファイルに保存
+with open("product_names.txt", "w") as f:
+    for name in product_names:
+        f.write(name + "\n")
